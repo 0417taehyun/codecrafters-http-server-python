@@ -1,12 +1,47 @@
 import dataclasses
-import enum
 import re
 import socket
 
 
-class HTTPMethod(str, enum.Enum):
-    GET: str = "GET"
-    POST: str = "POST"
+class HTTPRequest:
+    _ENCODING: str = "utf-8"
+
+    def __init__(self, chunk: bytes) -> None:
+        self.received_data: list[str] = chunk.decode(encoding=HTTPRequest._ENCODING).split("\r\n")
+        self._start_line: list[str] = self.received_data[0].split(" ")
+
+    @property
+    def method(self) -> str:
+        return self._start_line[0]
+
+    @property
+    def path(self) -> str:
+        return self._start_line[1]
+    
+    @property
+    def protocol(self) -> str:
+        return self._start_line[2]
+
+    @property
+    def headers(self) -> dict[str, str]:
+        parsed_headers: dict[str, str] = {}
+        for data in self.received_data[1:]:
+            if not data:
+                break
+            
+            name, value = data.split(":", maxsplit=1)
+            parsed_headers[name] = value.strip()
+
+        return parsed_headers
+
+    @property
+    def body(self) -> str:
+        parsed_content: str = ""
+        for data in self.received_data[::-1]:
+            if not data:
+                break
+            parsed_content += data
+        return parsed_content
 
 
 @dataclasses.dataclass
@@ -22,29 +57,23 @@ def main():
 
     with connection:
         chunk: bytes = connection.recv(Application.BUFFER_SIZE)
+        request: HTTPRequest = HTTPRequest(chunk=chunk)
 
-        received_information: str = chunk.decode(encoding="utf-8").split("\r\n")
-        print(received_information)
-        start_line: str = received_information[0]
-        method, path, protocol = start_line.split(" ")
-        
-        if method != HTTPMethod.GET.value:
-            print(f"Method not allowed: {received_information}")
-            connection.send(b"HTTP/1.1 405 Method Now Allowed\r\n\r\n")
+        if request.path == "/":
+            connection.send(b"HTTP/1.1 200 OK\r\n\r\n")
 
+        elif re.match(pattern=r"^(\/echo\/)", string=request.path):
+            path_param: str = request.path.replace("/echo/", "")
+            content_length: int = len(path_param)
+            connection.send(f"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {content_length}\r\n\r\n{path_param}".encode(encoding="utf-8"))
+
+        elif request.path == "/user-agent":
+            user_agent: str = request.headers.get("User-Agent")
+            content_length: int = len(user_agent)
+            connection.sendall(f"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {content_length}\r\n\r\n{user_agent}".encode(encoding="utf-8"))
+            
         else:
-            if path == "/":
-                connection.send(b"HTTP/1.1 200 OK\r\n\r\n")
-
-            elif re.match(pattern=r"^(\/echo\/)", string=path):
-                print(f"Path Parameter: {received_information}")
-                path_param: str = path.replace("/echo/", "")
-                content_length: int = len(path_param)
-                connection.send(f"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {content_length}\r\n\r\n{path_param}".encode(encoding="utf-8"))
-
-            else:
-                print(f"Not Found: {received_information}")
-                connection.send(b"HTTP/1.1 404 Not Found\r\n\r\n")
+            connection.send(b"HTTP/1.1 404 Not Found\r\n\r\n")
 
 
 if __name__ == "__main__":
